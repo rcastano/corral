@@ -1678,6 +1678,58 @@ namespace AngelicVerifierNull
             }
             return forallExpr;
         }
+        private static btype MatchesZero(Expr expr)
+        {
+            if (expr is LiteralExpr)
+            {
+                Microsoft.Basetypes.BigNum x = (expr as LiteralExpr).asBigNum;
+                if (x.Equals(Microsoft.Basetypes.BigNum.ZERO))
+                {
+                    return expr.Type;
+                }
+            }
+            return null;
+        }
+        private static btype MatchesNull(Expr expr)
+        {
+            if (expr != null && expr.ToString().Equals("null"))
+            {
+                return expr.Type;
+            }
+            return null;
+        }
+
+        // This might return false even when the expression contains "!= literal".
+        // The opposite never happens, if the method returns true, then the
+        // expression definitely contains "!= literal".
+        private static btype ContainsNeqLiteral(Expr expr, Func<Expr, btype> matches_expression)
+        {
+            if (expr is ForallExpr)
+            {
+                var e = expr as ForallExpr;
+                return ContainsNeqLiteral(e.Body, matches_expression);
+            }
+            if (expr is NAryExpr)
+            {
+                var e = expr as NAryExpr;
+                if (e.Fun is BinaryOperator)
+                {
+                    var op = e.Fun as BinaryOperator;
+                    if (op.Op.Equals(BinaryOperator.Opcode.Neq) && op.ArgumentCount == 2)
+                    {
+                        foreach (var a in e.Args)
+                        {
+                            var expr_type = matches_expression(a);
+                            if (expr_type != null)
+                            {
+                                return expr_type;
+                            }
+                        }
+                    }
+                }
+            }
+            return null;
+        }
 
         private static Expr AbstractRepeatedMapsInBlock(Expr expr, HashSet<Variable> supportVars)
         {
@@ -1702,8 +1754,24 @@ namespace AngelicVerifierNull
             foreach (var m in repeatedFields)
             {
                 var bvar = new BoundVariable(Token.NoToken, new TypedIdent(Token.NoToken, "_z", m.TypedIdent.Type.AsMap.Arguments[0]));
-                var fexpr = Expr.Gt(BoogieAstFactory.MkMapAccessExpr(m, IdentifierExpr.Ident(bvar)), 
-                    new LiteralExpr(Token.NoToken, Microsoft.Basetypes.BigNum.FromInt(0)));
+                btype null_expr_type = ContainsNeqLiteral(expr, MatchesNull);
+                btype zero_expr_type = ContainsNeqLiteral(expr, MatchesZero);
+                if (!((null_expr_type != null) ^ (zero_expr_type != null)))
+                {
+                    return null;
+                }
+                var null_expr = Expr.Ident("null", null_expr_type);
+                var zero_expr = new LiteralExpr(Token.NoToken, Microsoft.Basetypes.BigNum.FromInt(0));
+                Expr new_expr = null;
+                if (null_expr_type != null)
+                {
+                    new_expr = null_expr;
+                }
+                else
+                {
+                    new_expr = zero_expr;
+                }
+                var fexpr = Expr.Neq(BoogieAstFactory.MkMapAccessExpr(m, IdentifierExpr.Ident(bvar)), new_expr);
                 var forallExpr = new ForallExpr(Token.NoToken, new List<Variable>() { bvar }, fexpr);
                 if (returnExpr == null)
                     returnExpr = forallExpr;
